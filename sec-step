@@ -1,0 +1,17 @@
+apt -t bullseye-backports install unbound dns-root-data
+mkdir -p /var/log/unbound
+touch /var/log/unbound/unbound.log
+chown -R unbound:unbound /var/log/unbound/
+systemctl restart unbound
+
+cat << EOF > /etc/logrotate.d/unbound
+/var/log/unbound/unbound.log {
+    rotate 5
+    weekly
+    postrotate
+        unbound-control log_reopen
+    endscript
+}
+EOF
+
+systemctl restart logrotate.service
