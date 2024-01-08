@@ -15,3 +15,240 @@ cat << EOF > /etc/logrotate.d/unbound
 EOF
 
 systemctl restart logrotate.service
+
+apt install irqbalance
+systemctl enable irqbalance
+apt install chrony
+
+sed -i 's/pool 2.debian.pool.ntp.org iburst/#pool 2.debian.pool.ntp.org iburst/g' /etc/chrony/chrony.conf
+sed -i '/2.debian.pool.ntp.org/a\server a.st1.ntp.br iburst nts' /etc/chrony/chrony.conf
+sed -i '/2.debian.pool.ntp.org/a\server b.st1.ntp.br iburst nts' /etc/chrony/chrony.conf
+sed -i '/2.debian.pool.ntp.org/a\server c.st1.ntp.br iburst nts' /etc/chrony/chrony.conf
+sed -i '/2.debian.pool.ntp.org/a\server d.st1.ntp.br iburst nts' /etc/chrony/chrony.conf
+
+systemctl restart chronyd.service
+
+
+sed -i 's/ospfd=no/ospfd=yes/g' /etc/frr/daemons
+
+Edite o arquivo /etc/frr/frr.conf 
+nano /etc/frr/frr.conf 
+
+frr version 8.2.2
+frr defaults traditional
+hostname dns-recursivo-01
+log syslog informational
+no ip forwarding
+no ipv6 forwarding
+service integrated-vtysh-config
+!
+interface ens18
+ ip ospf message-digest-key 5 md5 <SENHA>
+ ip ospf network point-to-point
+exit
+!
+router ospf
+ ospf router-id 172.16.0.6
+ network 10.10.10.10/32 area 0.0.0.0
+ network 10.10.9.9/32 area 0.0.0.0
+ network 172.16.0.4/30 area 0.0.0.0
+ area 0 authentication message-digest
+exit
+!
+
+systemctl restart frr.service
+
+
+##################################################################
+			Configurando o unbound
+##################################################################
+
+nano /etc/unbound/unbound.conf.d/local.conf
+
+server:
+        verbosity: 1
+        statistics-interval: 0
+        statistics-cumulative: no
+        extended-statistics: yes
+        num-threads: 6
+        serve-expired: yes
+        interface: 127.0.0.1
+        interface: 10.10.10.10
+        interface: 10.10.9.9
+        interface: 172.16.0.6
+        interface: ::1
+        interface-automatic: no
+        outgoing-interface: 198.18.1.10
+        outgoing-interface: 2001:db8::faca:198:18:1:10
+        outgoing-range: 8192
+        outgoing-num-tcp: 1024
+        incoming-num-tcp: 2048
+        so-rcvbuf: 4m
+        so-sndbuf: 4m
+        so-reuseport: yes
+        edns-buffer-size: 1232
+        msg-cache-size: 1G
+        msg-cache-slabs: 4
+        num-queries-per-thread: 4096
+        rrset-cache-size: 2G
+        rrset-cache-slabs: 4
+        infra-cache-slabs: 4
+        do-ip4: yes
+        do-ip6: yes
+        do-udp: yes
+        do-tcp: yes
+        chroot: ""
+        username: "unbound"
+        directory: "/etc/unbound"
+        logfile: "/var/log/unbound/unbound.log"
+        use-syslog: no
+        log-time-ascii: yes
+        log-queries: no
+        pidfile: "/var/run/unbound.pid"
+        root-hints: "/usr/share/dns/root.hints"
+        hide-identity: yes
+        hide-version: yes
+        unwanted-reply-threshold: 10000000
+        prefetch: yes
+        prefetch-key: yes
+        rrset-roundrobin: yes
+        minimal-responses: yes
+        module-config: "respip validator iterator"
+        val-clean-additional: yes
+        val-log-level: 1
+        key-cache-slabs: 4
+        deny-any: yes
+        access-control: 198.18.0.0/22 allow
+        access-control: 2001:db8::/32 allow
+ 
+rpz:
+  name: rpz.block.host.local.zone
+  zonefile: /etc/unbound/rpz.block.hosts.zone
+  rpz-action-override: nxdomain
+ 
+python:
+ 
+auth-zone:
+    name: "."
+    master: "b.root-servers.net"
+    master: "c.root-servers.net"
+    master: "d.root-servers.net"
+    master: "f.root-servers.net"
+    master: "g.root-servers.net"
+    master: "k.root-servers.net"
+    master: "lax.xfr.dns.icann.org"
+    master: "iad.xfr.dns.icann.org"
+    fallback-enabled: yes
+    for-downstream: no
+    for-upstream: yes
+    zonefile: "/var/lib/unbound/root.zone"
+
+
+nano /etc/unbound/rpz.block.hosts.zone
+$TTL 2h
+@ IN SOA localhost. root.localhost. (2 6h 1h 1w 2h)
+  IN NS  localhost.
+; RPZ manual block hosts
+*.josedascoves.com CNAME .
+josedascoves.com CNAME .
+
+nano  /etc/resolv.conf
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+nameserver 2001:4860:4860::8888
+
+
+mkdir /root/scripts
+#!/usr/bin/env bash
+#Script para teste de recursividade v2.2
+# Por Marcelo Gondim
+# Em 24-12-2022
+#
+# checa_dns.sh is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+#-----------------------------------------------------------------------
+#Informe um domínio por linha:
+dominios_testar=(
+www.google.com
+www.terra.com.br
+www.uol.com.br
+www.globo.com
+www.facebook.com
+www.youtube.com
+www.twitch.com
+www.discord.com
+www.debian.org
+www.redhat.com
+)
+corte_taxa_falha=100 #Porcentagem de falha para executar uma ação
+#-----------------------------------------------------------------------
+remove_ospf() {
+   habilitado="`vtysh -c 'show run' | grep \"10.10.10.10\"`"
+   if [ "$habilitado" != "" ]; then
+      vtysh -c 'conf t' -c 'router ospf' -c 'no network 10.10.10.10/32 area 0.0.0.0' -c 'end' -c 'wr'
+      vtysh -c 'conf t' -c 'router ospf' -c 'no network 10.10.9.9/32 area 0.0.0.0' -c 'end' -c 'wr'
+      #echo "Servidor $HOSTNAME morreu!" | /usr/local/sbin/telegram-notify --error --text -
+   fi
+}
+
+adiciona_ospf() {
+habilitado="`vtysh -c 'show run' | grep \"10.10.10.10\"`"
+   if [ "$habilitado" == "" ]; then
+      vtysh -c 'conf t' -c 'router ospf' -c 'network 10.10.10.10/32 area 0.0.0.0' -c 'end' -c 'wr'
+      vtysh -c 'conf t' -c 'router ospf' -c 'network 10.10.9.9/32 area 0.0.0.0' -c 'end' -c 'wr'
+      #echo "Servidor $HOSTNAME retornou do inferno!" | /usr/local/sbin/telegram-notify --success --text -
+   fi
+}
+
+systemctl status unbound &> /dev/null;
+if [ $? -ne 0 ]; then
+   #echo "Servidor $HOSTNAME morreu DNS mas tentando levantar!" | /usr/local/sbin/telegram-notify --error --text -
+   systemctl restart unbound
+   systemctl status unbound &> /dev/null;
+   if [ $? -ne 0 ]; then
+      remove_ospf
+      exit
+   fi
+   #echo "Servidor $HOSTNAME servico DNS voltou mas tinha morrido!" | /usr/local/sbin/telegram-notify --success --text -
+fi
+
+qt_falhas=0
+qt_total="${#dominios_testar[@]}"
+echo "total_dominios: $qt_total"
+for site in "${dominios_testar[@]}"
+do
+  resolver="127.0.0.1"
+  echo -e " - dominio $site - $resolver - \c"
+  host $site $resolver &> /dev/null
+  if [ $? -ne 0 ]; then
+     ((qt_falhas++))
+     echo -e "[Falhou]"
+  else
+     echo -e "[OK]"
+  fi
+done
+
+taxa_falha=$((qt_falhas*100/qt_total))
+echo "Falhas $qt_falhas/$qt_total ($taxa_falha%)"
+
+if [ "$taxa_falha" -ge "$corte_taxa_falha" ]; then
+   remove_ospf
+   exit
+fi
+adiciona_ospf
+
+
+chmod 700 /root/scripts/checa_dns.sh
+
+echo "*/1 *   * * *   root    /root/scripts/checa_dns.sh" >> /etc/crontab
