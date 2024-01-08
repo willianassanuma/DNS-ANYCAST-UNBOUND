@@ -1,0 +1,30 @@
+apt update && apt full-upgrade
+apt install -y net-tools nftables htop iotop sipcalc tcpdump curl gnupg rsync wget host dnsutils mtr-tiny bmon tmux whois ethtool dnstop
+
+
+cp /etc/sysctl.conf /etc/sysctl.conf.backup
+
+echo net.core.rmem_max = 2147483647 >> /etc/sysctl.conf
+echo net.core.wmem_max = 2147483647 >> /etc/sysctl.conf
+echo net.ipv4.tcp_rmem = 4096 87380 2147483647 >> /etc/sysctl.conf
+echo net.ipv4.tcp_wmem = 4096 65536 2147483647 >> /etc/sysctl.conf
+echo net.netfilter.nf_conntrack_buckets = 512000 >> /etc/sysctl.conf
+echo net.netfilter.nf_conntrack_max = 4096000 >> /etc/sysctl.conf
+echo vm.swappiness=10 >> /etc/sysctl.conf
+
+echo nf_conntrack >> /etc/modules
+modprobe nf_conntrack
+sysctl -p
+
+
+echo "deb https://deb.frrouting.org/frr bullseye frr-8" > /etc/apt/sources.list.d/frr.list
+curl -s https://deb.frrouting.org/frr/keys.asc | apt-key add -
+apt update
+apt install frr frr-doc frr-pythontools
+
+apt-mark hold frr frr-doc frr-pythontools
+
+mkdir -p /etc/default/grub.d
+echo 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT apparmor=0"' | tee /etc/default/grub.d/apparmor.cfg
+update-grub
+reboot
